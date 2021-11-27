@@ -1,0 +1,13 @@
+[package]
+name = "arrowvortex_clipboard"
+version = "0.1.0"
+edition = "2018"
+license = "MIT"
+description = "Small library for encoding and decoding ArrowVortex clipboard data"
+repository = "https://github.com/kangalioo/arrowvortex-clipboard"
+
+[dependencies]
+
+[features]
+default = ["std"]
+std = []
