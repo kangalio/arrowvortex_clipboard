@@ -45,14 +45,15 @@ fn decode_dwords_from_base85(data: &[u8]) -> impl Iterator<Item = u8> + '_ {
     })
 }
 
-fn decode_varint(data: &mut impl Iterator<Item = u8>) -> Result<u64, DecodeError> {
+#[inline(never)]
+fn decode_varint(data: &mut dyn Iterator<Item = u8>) -> Result<u64, DecodeError> {
     let mut result = 0;
     for i in 0.. {
         let byte = data.next().ok_or(DecodeError::UnexpectedEof)?;
         let is_last_byte = byte & 0x80 == 0;
         let varint_digit = byte & 0x7F;
 
-        result += (varint_digit as u64) << (7 * i);
+        result |= (varint_digit as u64) << (7 * i);
         if is_last_byte {
             break;
         }
@@ -87,7 +88,7 @@ pub fn decode(
     let mut data = decode_dwords_from_base85(data);
 
     if data.next().ok_or(DecodeError::UnexpectedEof)? != 0 {
-        panic!("non-trivial clipboard data is not supported yet");
+        return Err(DecodeError::NonTrivial);
     }
 
     let size = decode_varint(&mut data)?;

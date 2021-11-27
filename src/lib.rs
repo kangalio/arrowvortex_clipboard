@@ -10,7 +10,7 @@ Main credit goes to DeltaEpsilon for reverse-engineering ArrowVortex' clipboard 
 implementing the first ArrowVortex clipboard library.
 
 This library is no_std-compatible if you opt-out of the `std` feature. The `std` feature includes
-an [`std::error::Error`] implementation for [`DecodeError`].
+an [`std::error::Error`] implementation for [`DecodeError`] and [`EncodeError`].
 
 ```rust
 // EtternaOnline noteskin template pattern (https://etternaonline.com/noteskins)

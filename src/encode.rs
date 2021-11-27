@@ -1,8 +1,37 @@
 use crate::{Note, NoteKind};
 
+/// Error that may occur during [`encode()`]
+#[derive(Debug)]
+pub enum EncodeError {
+    /// Error while writing data to the given output stream
+    Write(core::fmt::Error),
+    /// Input data was not sorted
+    NotSorted,
+}
+
+impl core::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EncodeError::Write(w) => w.fmt(f),
+            EncodeError::NotSorted => f.write_str("given notes are not sorted"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for EncodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            EncodeError::Write(w) => Some(w),
+            EncodeError::NotSorted => None,
+        }
+    }
+}
+
 struct Base85Encoder<'a> {
     buffer: [u8; 4],
     buffer_i: usize,
+    // I benchmarked: replacing this with static dispatch makes it SLOWER! 1.30ms -> 1.32ms
     writer: &'a mut dyn core::fmt::Write,
 }
 
@@ -15,7 +44,8 @@ impl<'a> Base85Encoder<'a> {
         }
     }
 
-    pub fn write(&mut self, byte: u8) -> core::fmt::Result {
+    // #[inline(never)] slows this down
+    pub fn write(&mut self, byte: u8) -> Result<(), EncodeError> {
         // Fill next buffer slot. If buffer isn't full yet, we're done
         self.buffer[self.buffer_i] = byte;
         self.buffer_i += 1;
@@ -25,7 +55,8 @@ impl<'a> Base85Encoder<'a> {
         Ok(())
     }
 
-    pub fn flush_buffer(&mut self) -> core::fmt::Result {
+    // #[inline(never)] slows this down
+    pub fn flush_buffer(&mut self) -> Result<(), EncodeError> {
         if self.buffer_i == 0 {
             return Ok(());
         }
@@ -43,11 +74,14 @@ impl<'a> Base85Encoder<'a> {
         ];
         let buffer = &buffer[..(1 + self.buffer_i)];
         self.buffer_i = 0;
-        self.writer.write_str(core::str::from_utf8(buffer).unwrap())
+        self.writer
+            .write_str(core::str::from_utf8(buffer).unwrap())
+            .map_err(EncodeError::Write)
     }
 }
 
-fn encode_varint(writer: &mut Base85Encoder<'_>, mut n: u64) -> core::fmt::Result {
+// #[inline(never)] slows this down
+fn encode_varint(writer: &mut Base85Encoder<'_>, mut n: u64) -> Result<(), EncodeError> {
     loop {
         let byte = n as u8 & 0x7F;
         n >>= 7;
@@ -80,11 +114,20 @@ fn encode_varint(writer: &mut Base85Encoder<'_>, mut n: u64) -> core::fmt::Resul
 /// arrowvortex_clipboard::encode(&mut buffer, notes)?;
 /// assert_eq!(&buffer, r#"ArrowVortex:notes:!!E9%!=T#H"!d"#);
 ///
-/// # Ok::<(), core::fmt::Error>(())
+/// # Ok::<(), arrowvortex_clipboard::EncodeError>(())
 /// ```
-pub fn encode(mut writer: impl core::fmt::Write, notes: &[Note]) -> core::fmt::Result {
-    writer.write_str("ArrowVortex:notes:")?;
-    let mut writer = Base85Encoder::new(&mut writer);
+pub fn encode(writer: &mut dyn core::fmt::Write, notes: &[Note]) -> Result<(), EncodeError> {
+    writer
+        .write_str("ArrowVortex:notes:")
+        .map_err(EncodeError::Write)?;
+    let mut writer = Base85Encoder::new(writer);
+
+    let is_sorted = notes
+        .windows(2)
+        .all(|w| (w[0].row, w[0].column) <= (w[1].row, w[1].column));
+    if !is_sorted {
+        return Err(EncodeError::NotSorted);
+    }
 
     writer.write(0)?;
     encode_varint(&mut writer, notes.len() as u64)?;
