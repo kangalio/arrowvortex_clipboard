@@ -1,4 +1,4 @@
-use crate::{Note, NoteKind};
+use crate::{Note, NoteKind, TempoEvent, TempoEventKind};
 
 /// Error in [`decode`] call
 #[derive(Debug)]
@@ -14,6 +14,11 @@ pub enum DecodeError {
         /// The unknown note type integer that was encountered
         note_type: u8,
     },
+    /// Input contained an unknown tempo event type
+    UnknownTempoEventType {
+        /// The unknown tempo event type integer that was encountered
+        tempo_event_type: u8,
+    },
 }
 
 impl core::fmt::Display for DecodeError {
@@ -23,6 +28,9 @@ impl core::fmt::Display for DecodeError {
             Self::MissingSignature => f.write_str("argument is not AV clipboard data"),
             Self::NonTrivial => f.write_str("non-trivial clipboard data is not supported yet"),
             Self::UnknownNoteType { note_type } => write!(f, "unknown note type {}", note_type),
+            Self::UnknownTempoEventType { tempo_event_type } => {
+                write!(f, "unknown tempo event type {}", tempo_event_type)
+            }
         }
     }
 }
@@ -32,20 +40,29 @@ impl std::error::Error for DecodeError {}
 
 /// Convert `data` from AV clipboard format into bytes
 fn decode_dwords_from_base85(data: &[u8]) -> impl Iterator<Item = u8> + '_ {
+    let mut data = data.iter().copied();
+
     // ArrowVortex groups bytes into 32bit ints and encodes them in base85 starting from ASCII 33.
     // Every 32bit int is represented by 5 base85 digits
-    data.chunks(5).flat_map(|chunk| {
-        let mut dword = 0;
-        dword += 85_u32.pow(4) * chunk.get(0).map_or(85, |b| b - 33) as u32;
-        dword += 85_u32.pow(3) * chunk.get(1).map_or(85, |b| b - 33) as u32;
-        dword += 85_u32.pow(2) * chunk.get(2).map_or(85, |b| b - 33) as u32;
-        dword += 85_u32.pow(1) * chunk.get(3).map_or(85, |b| b - 33) as u32;
-        dword += 85_u32.pow(0) * chunk.get(4).map_or(85, |b| b - 33) as u32;
-        core::array::IntoIter::new(dword.to_be_bytes())
+    std::iter::from_fn(move || {
+        let first_char = data.next()?;
+        // 'z' is a shorthand for an entire zero chunk
+        if first_char == b'z' {
+            return Some([0, 0, 0, 0]);
+        }
+
+        let mut dword = 85_u32.pow(4) * (first_char - 33) as u32
+            + 85_u32.pow(3) * data.next().map_or(85, |b| b - 33) as u32
+            + 85_u32.pow(2) * data.next().map_or(85, |b| b - 33) as u32
+            + 85_u32.pow(1) * data.next().map_or(85, |b| b - 33) as u32
+            + 85_u32.pow(0) * data.next().map_or(85, |b| b - 33) as u32;
+        Some(dword.to_be_bytes())
     })
+    .flat_map(|dword_chunk| core::array::IntoIter::new(dword_chunk))
 }
 
 #[inline(never)]
+// TODO: return i32 instead?
 fn decode_varint(data: &mut dyn Iterator<Item = u8>) -> Result<u64, DecodeError> {
     let mut result = 0;
     for i in 0.. {
@@ -59,6 +76,157 @@ fn decode_varint(data: &mut dyn Iterator<Item = u8>) -> Result<u64, DecodeError>
         }
     }
     Ok(result)
+}
+
+fn decode_f64(data: &mut dyn Iterator<Item = u8>) -> Result<f64, DecodeError> {
+    Ok(f64::from_le_bytes([
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+    ]))
+}
+
+fn decode_notes<'a, P: 'static>(
+    mut data: impl Iterator<Item = u8> + 'a,
+    position_decode: fn(&mut dyn Iterator<Item = u8>) -> Result<P, DecodeError>,
+) -> Result<impl Iterator<Item = Result<Note<P>, DecodeError>> + 'a, DecodeError> {
+    let size = decode_varint(&mut data)?;
+
+    Ok((0..size).map(move |_| {
+        let first_byte = data.next().ok_or(DecodeError::UnexpectedEof)?;
+        let is_tap = first_byte & 0x80 == 0;
+        let column = first_byte & 0x7F;
+
+        let pos = position_decode(&mut data)?;
+
+        let note_kind = if is_tap {
+            NoteKind::Tap
+        } else {
+            let end_pos = position_decode(&mut data)?;
+            match data.next().ok_or(DecodeError::UnexpectedEof)? {
+                0 => NoteKind::Hold { end_pos },
+                1 => NoteKind::Mine,
+                2 => NoteKind::Roll { end_pos },
+                3 => NoteKind::Lift,
+                4 => NoteKind::Fake,
+                note_type => return Err(DecodeError::UnknownNoteType { note_type }),
+            }
+        };
+
+        Ok(Note {
+            pos,
+            column,
+            kind: note_kind,
+        })
+    }))
+}
+
+fn decode_u32(data: &mut dyn Iterator<Item = u8>) -> Result<u32, DecodeError> {
+    Ok(u32::from_le_bytes([
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+        data.next().ok_or(DecodeError::UnexpectedEof)?,
+    ]))
+}
+
+fn decode_single_tempo_event(
+    data: &mut dyn Iterator<Item = u8>,
+    kind: &mut Option<u8>,
+) -> Result<TempoEvent, DecodeError> {
+    if kind.is_none() {
+        *kind = Some(data.next().ok_or(DecodeError::UnexpectedEof)?);
+    }
+    let kind = kind.unwrap();
+
+    let pos = decode_u32(data)?;
+    let kind = match kind {
+        0 => TempoEventKind::Bpm {
+            bpm: decode_f64(data)?,
+        },
+        1 => TempoEventKind::Stop {
+            time: decode_f64(data)?,
+        },
+        2 => TempoEventKind::Delay {
+            time: decode_f64(data)?,
+        },
+        3 => TempoEventKind::Warp {
+            num_skipped_rows: decode_u32(data)?,
+        },
+        4 => TempoEventKind::TimeSignature {
+            numerator: decode_u32(data)?,
+            denominator: decode_u32(data)?,
+        },
+        5 => TempoEventKind::Ticks {
+            num_ticks: decode_u32(data)?,
+        },
+        6 => TempoEventKind::Combo {
+            combo_multiplier: decode_u32(data)?,
+            miss_multiplier: decode_u32(data)?,
+        },
+        7 => TempoEventKind::Speed {
+            ratio: decode_f64(data)?,
+            delay: decode_f64(data)?,
+            delay_is_time: decode_u32(data)? != 0,
+        },
+        8 => TempoEventKind::Scroll {
+            ratio: decode_f64(data)?,
+        },
+        9 => TempoEventKind::FakeSegment {
+            num_fake_rows: decode_u32(data)?,
+        },
+        10 => {
+            let message_len = decode_varint(data)?;
+            // Discard the message for now, because idk how to store it on no_std
+            for _ in 0..message_len {
+                let _: u8 = data.next().ok_or(DecodeError::UnexpectedEof)?;
+            }
+            TempoEventKind::Label { message_len }
+        }
+        other => {
+            return Err(DecodeError::UnknownTempoEventType {
+                tempo_event_type: other,
+            })
+        }
+    };
+    Ok(TempoEvent { pos, kind })
+}
+
+fn decode_tempo<'a>(
+    mut data: impl Iterator<Item = u8> + 'a,
+) -> Result<impl Iterator<Item = Result<TempoEvent, DecodeError>> + 'a, DecodeError> {
+    let mut count = decode_varint(&mut data)?;
+    let mut kind = None;
+
+    Ok(std::iter::from_fn(move || {
+        if count == 0 {
+            return None;
+        };
+
+        let event = decode_single_tempo_event(&mut data, &mut kind);
+
+        count -= 1;
+        if count == 0 {
+            count = match decode_varint(&mut data) {
+                Ok(x) => x,
+                Err(e) => return Some(Err(e)),
+            };
+            kind = None;
+        }
+
+        Some(event)
+    }))
+}
+
+pub enum DecodeResult<A, B, C> {
+    NotesRowBased(A),
+    NotesTimeBased(B),
+    TempoEvents(C),
 }
 
 /// Decodes a byte buffer into an iterator of [`Note`]
@@ -80,46 +248,35 @@ fn decode_varint(data: &mut dyn Iterator<Item = u8>) -> Result<u64, DecodeError>
 /// ```
 pub fn decode(
     data: &[u8],
-) -> Result<impl Iterator<Item = Result<Note, DecodeError>> + '_, DecodeError> {
-    let data = data
-        .strip_prefix(b"ArrowVortex:notes:")
-        .ok_or(DecodeError::MissingSignature)?;
+) -> Result<
+    DecodeResult<
+        impl Iterator<Item = Result<Note<u64>, DecodeError>> + '_,
+        impl Iterator<Item = Result<Note<f64>, DecodeError>> + '_,
+        impl Iterator<Item = Result<TempoEvent, DecodeError>> + '_,
+    >,
+    DecodeError,
+> {
+    let (data, is_tempo) = if let Some(data) = data.strip_prefix(b"ArrowVortex:notes:") {
+        (data, false)
+    } else if let Some(data) = data.strip_prefix(b"ArrowVortex:tempo:") {
+        (data, true)
+    } else {
+        return Err(DecodeError::MissingSignature);
+    };
 
     let mut data = decode_dwords_from_base85(data);
 
-    if data.next().ok_or(DecodeError::UnexpectedEof)? != 0 {
-        return Err(DecodeError::NonTrivial);
-    }
+    Ok(if is_tempo {
+        DecodeResult::TempoEvents(decode_tempo(data)?)
+    } else {
+        let is_time_based = data.next().ok_or(DecodeError::UnexpectedEof)? != 0;
 
-    let size = decode_varint(&mut data)?;
-
-    Ok((0..size).map(move |_| {
-        let signifier = data.next().ok_or(DecodeError::UnexpectedEof)?;
-        let is_tap = signifier & 0x80 == 0;
-        let column = signifier & 0x7F;
-
-        let row = decode_varint(&mut data)?;
-
-        let note_kind = if is_tap {
-            NoteKind::Tap
+        if is_time_based {
+            DecodeResult::NotesTimeBased(decode_notes(data, decode_f64)?)
         } else {
-            let end_row = decode_varint(&mut data)?;
-            match data.next().ok_or(DecodeError::UnexpectedEof)? {
-                0 => NoteKind::Hold { end_row },
-                1 => NoteKind::Mine,
-                2 => NoteKind::Roll { end_row },
-                3 => NoteKind::Lift,
-                4 => NoteKind::Fake,
-                note_type => return Err(DecodeError::UnknownNoteType { note_type }),
-            }
-        };
-
-        Ok(Note {
-            row,
-            column,
-            kind: note_kind,
-        })
-    }))
+            DecodeResult::NotesRowBased(decode_notes(data, decode_varint)?)
+        }
+    })
 }
 
 #[cfg(test)]

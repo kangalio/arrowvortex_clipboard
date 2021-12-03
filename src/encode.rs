@@ -116,7 +116,7 @@ fn encode_varint(writer: &mut Base85Encoder<'_>, mut n: u64) -> Result<(), Encod
 ///
 /// # Ok::<(), arrowvortex_clipboard::EncodeError>(())
 /// ```
-pub fn encode(writer: &mut dyn core::fmt::Write, notes: &[Note]) -> Result<(), EncodeError> {
+pub fn encode(writer: &mut dyn core::fmt::Write, notes: &[Note<u64>]) -> Result<(), EncodeError> {
     writer
         .write_str("ArrowVortex:notes:")
         .map_err(EncodeError::Write)?;
@@ -124,7 +124,7 @@ pub fn encode(writer: &mut dyn core::fmt::Write, notes: &[Note]) -> Result<(), E
 
     let is_sorted = notes
         .windows(2)
-        .all(|w| (w[0].row, w[0].column) <= (w[1].row, w[1].column));
+        .all(|w| (w[0].pos, w[0].column) <= (w[1].pos, w[1].column));
     if !is_sorted {
         return Err(EncodeError::NotSorted);
     }
@@ -135,17 +135,17 @@ pub fn encode(writer: &mut dyn core::fmt::Write, notes: &[Note]) -> Result<(), E
         match note.kind {
             NoteKind::Tap => {
                 writer.write(note.column & 0x7F)?;
-                encode_varint(&mut writer, note.row)?;
+                encode_varint(&mut writer, note.pos)?;
             }
-            NoteKind::Hold { end_row } | NoteKind::Roll { end_row } => {
+            NoteKind::Hold { end_pos } | NoteKind::Roll { end_pos } => {
                 writer.write(note.column | 0x80)?;
-                encode_varint(&mut writer, note.row)?;
-                encode_varint(&mut writer, end_row)?;
+                encode_varint(&mut writer, note.pos)?;
+                encode_varint(&mut writer, end_pos)?;
             }
             NoteKind::Mine | NoteKind::Lift | NoteKind::Fake => {
                 writer.write(note.column | 0x80)?;
-                encode_varint(&mut writer, note.row)?;
-                encode_varint(&mut writer, note.row)?;
+                encode_varint(&mut writer, note.pos)?;
+                encode_varint(&mut writer, note.pos)?;
             }
         }
 

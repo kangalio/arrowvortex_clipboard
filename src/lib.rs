@@ -40,20 +40,20 @@ pub use encode::*;
 
 /// Note-type specific data
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NoteKind {
+pub enum NoteKind<P> {
     /// Normal tap
     Tap,
     /// Hold note, spanning from this note's row up to end_row
     Hold {
         /// Where this hold note ends
-        end_row: u64,
+        end_pos: P,
     },
     /// Mine note
     Mine,
     /// Roll note, spanning from this note's row up to end_row
     Roll {
         /// Where this roll note ends
-        end_row: u64,
+        end_pos: P,
     },
     /// Lift note
     Lift,
@@ -61,7 +61,7 @@ pub enum NoteKind {
     Fake,
 }
 
-impl Default for NoteKind {
+impl<P> Default for NoteKind<P> {
     fn default() -> Self {
         Self::Tap
     }
@@ -69,11 +69,61 @@ impl Default for NoteKind {
 
 /// Singular note
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
-pub struct Note {
-    /// Noterow of this note
-    pub row: u64,
+pub struct Note<P> {
+    /// Position of this note
+    pub pos: P,
     /// Column of this note. Left-most column is 0
     pub column: u8,
-    /// Type of this note and type-specific data
-    pub kind: NoteKind,
+    /// Type and type-specific data for this note
+    pub kind: NoteKind<P>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TempoEventKind {
+    Bpm {
+        bpm: f64,
+    },
+    Stop {
+        time: f64,
+    },
+    Delay {
+        time: f64,
+    },
+    Warp {
+        num_skipped_rows: u32,
+    },
+    TimeSignature {
+        numerator: u32,
+        denominator: u32,
+    },
+    Ticks {
+        num_ticks: u32,
+    },
+    Combo {
+        combo_multiplier: u32,
+        miss_multiplier: u32,
+    },
+    Speed {
+        ratio: f64,
+        delay: f64,
+        delay_is_time: bool,
+    },
+    Scroll {
+        ratio: f64,
+    },
+    FakeSegment {
+        num_fake_rows: u32,
+    },
+    Label {
+        message_len: u64,
+        // TODO: message string
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TempoEvent {
+    /// Row position of this tempo event
+    pub pos: u32,
+    /// Type and type-specific for this tempo event
+    pub kind: TempoEventKind,
 }
