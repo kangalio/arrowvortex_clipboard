@@ -8,25 +8,19 @@ libary by DeltaEpsilon.
 Main credit goes to DeltaEpsilon for reverse-engineering ArrowVortex' clipboard functions and
 implementing the first ArrowVortex clipboard library.
 
-This library is no_std-compatible if you opt-out of the `std` feature. The `std` feature includes
-an [`std::error::Error`] implementation for [`DecodeError`] and [`EncodeError`].
-
 ```rust
 // EtternaOnline noteskin template pattern (https://etternaonline.com/noteskins)
 let data = r#"ArrowVortex:notes:!"8i-K)chjJHuM^!#P_Z![IjrJi#:bJ2UO3!BC3L"%E"#;
 
 // Decode string into Vec<Note>
 let notes = match arrowvortex_clipboard::decode(data.as_bytes())? {
-    arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => {
-        notes.collect::<Result<Vec<_>, _>>()?
-    },
+    arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => notes,
     _ => panic!("Unexpected data type"),
 };
 println!("{:?}", notes);
 
 // Encode &[Note] into string
-let mut buffer = String::new();
-arrowvortex_clipboard::encode_row_based_notes(&mut buffer, &notes)?;
+let buffer = arrowvortex_clipboard::encode_row_based_notes(&notes)?;
 println!("{}", buffer);
 
 // Verify that string stayed identical after roundtrip
@@ -143,8 +137,6 @@ pub enum TempoEventKind {
         num_fake_rows: u32,
     },
     /// Label with arbitrary content
-    ///
-    /// Only message length is stored currently, due to no_std restrictions
     Label {
         /// Message content
         message: Vec<u8>,

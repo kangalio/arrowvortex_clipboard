@@ -117,11 +117,10 @@ fn encode_u32(writer: &mut Base85Encoder<'_>, n: u32) -> Result<(), EncodeError>
 }
 
 fn encode_notes<P: PartialOrd + Copy>(
-    writer: &mut dyn core::fmt::Write,
     notes: &[Note<P>],
     time_based: bool,
     position_decode: impl Fn(&mut Base85Encoder<'_>, P) -> Result<(), EncodeError>,
-) -> Result<(), EncodeError> {
+) -> Result<String, EncodeError> {
     let is_sorted = notes
         .windows(2)
         .all(|w| (w[0].pos, w[0].column) <= (w[1].pos, w[1].column));
@@ -129,10 +128,8 @@ fn encode_notes<P: PartialOrd + Copy>(
         return Err(EncodeError::NotSorted);
     }
 
-    writer
-        .write_str("ArrowVortex:notes:")
-        .map_err(EncodeError::Write)?;
-    let mut writer = Base85Encoder::new(writer);
+    let mut buffer = String::from("ArrowVortex:notes:");
+    let mut writer = Base85Encoder::new(&mut buffer);
 
     writer.write(time_based as u8)?;
     encode_varint(&mut writer, notes.len() as u64)?;
@@ -166,7 +163,7 @@ fn encode_notes<P: PartialOrd + Copy>(
 
     writer.flush_buffer()?;
 
-    Ok(())
+    Ok(buffer)
 }
 
 /// Encodes a list of row-based [`Note`]s into the given writer
@@ -183,17 +180,15 @@ fn encode_notes<P: PartialOrd + Copy>(
 ///     Note { pos: 36, column: 3, kind: NoteKind::Tap },
 /// ];
 ///
-/// let mut buffer = String::new();
-/// arrowvortex_clipboard::encode_row_based_notes(&mut buffer, notes)?;
-/// assert_eq!(&buffer, r#"ArrowVortex:notes:!!E9%!=T#H"!d"#);
+/// assert_eq!(
+///     arrowvortex_clipboard::encode_row_based_notes(notes)?,
+///     r#"ArrowVortex:notes:!!E9%!=T#H"!d"#,
+/// );
 ///
 /// # Ok::<(), arrowvortex_clipboard::EncodeError>(())
 /// ```
-pub fn encode_row_based_notes(
-    writer: &mut dyn core::fmt::Write,
-    notes: &[Note<u64>],
-) -> Result<(), EncodeError> {
-    encode_notes(writer, notes, false, encode_varint)
+pub fn encode_row_based_notes(notes: &[Note<u64>]) -> Result<String, EncodeError> {
+    encode_notes(notes, false, encode_varint)
 }
 
 /// Encodes a list of time-based [`Note`]s into the given writer
@@ -210,17 +205,15 @@ pub fn encode_row_based_notes(
 ///     Note { pos: 0.75, column: 3, kind: NoteKind::Tap },
 /// ];
 ///
-/// let mut buffer = String::new();
-/// arrowvortex_clipboard::encode_time_based_notes(&mut buffer, notes)?;
-/// assert_eq!(&buffer, r#"ArrowVortex:notes:!<`B&z!!!!"z!!(A1!WW3#!!!#W56ClczkW]"#);
+/// assert_eq!(
+///     arrowvortex_clipboard::encode_time_based_notes(notes)?,
+///     r#"ArrowVortex:notes:!<`B&z!!!!"z!!(A1!WW3#!!!#W56ClczkW]"#,
+/// );
 ///
 /// # Ok::<(), arrowvortex_clipboard::EncodeError>(())
 /// ```
-pub fn encode_time_based_notes(
-    writer: &mut dyn core::fmt::Write,
-    notes: &[Note<f64>],
-) -> Result<(), EncodeError> {
-    encode_notes(writer, notes, true, encode_f64)
+pub fn encode_time_based_notes(notes: &[Note<f64>]) -> Result<String, EncodeError> {
+    encode_notes(notes, true, encode_f64)
 }
 
 fn tempo_event_kind(event: &TempoEventKind) -> u8 {
@@ -323,23 +316,21 @@ fn encode_single_tempo_event(
 /// ```rust
 /// use arrowvortex_clipboard::{TempoEvent, TempoEventKind};
 ///
-/// let notes = &[
+/// let events = &[
 ///     TempoEvent { row: 0, kind: TempoEventKind::Bpm { bpm: 120.0 } },
 ///     TempoEvent { row: 48, kind: TempoEventKind::Delay { time: 0.2 } },
 ///     TempoEvent { row: 96, kind: TempoEventKind::Warp { num_skipped_rows: 24 } },
 ///     TempoEvent { row: 144, kind: TempoEventKind::Scroll { ratio: 2.0 } },
 /// ];
 ///
-/// let mut buffer = String::new();
-/// arrowvortex_clipboard::encode_tempo(&mut buffer, notes)?;
-/// assert_eq!(&buffer, r#"ArrowVortex:tempo:!<<*"zz?9eMm0E;(QR[KS3R@2/]!<Z^0!!!i9!!!$*O8o7\z!!!!a!!"#);
+/// assert_eq!(
+///     arrowvortex_clipboard::encode_tempo(events)?,
+///     r#"ArrowVortex:tempo:!<<*"zz?9eMm0E;(QR[KS3R@2/]!<Z^0!!!i9!!!$*O8o7\z!!!!a!!"#,
+/// );
 ///
 /// # Ok::<(), arrowvortex_clipboard::EncodeError>(())
 /// ```
-pub fn encode_tempo(
-    writer: &mut dyn core::fmt::Write,
-    tempo_events: &[TempoEvent],
-) -> Result<(), EncodeError> {
+pub fn encode_tempo(tempo_events: &[TempoEvent]) -> Result<String, EncodeError> {
     let is_sorted = tempo_events.windows(2).all(|w| {
         (tempo_event_kind(&w[0].kind), w[0].row) <= (tempo_event_kind(&w[1].kind), w[1].row)
     });
@@ -347,10 +338,8 @@ pub fn encode_tempo(
         return Err(EncodeError::NotSorted);
     }
 
-    writer
-        .write_str("ArrowVortex:tempo:")
-        .map_err(EncodeError::Write)?;
-    let mut writer = Base85Encoder::new(writer);
+    let mut buffer = String::from("ArrowVortex:tempo:");
+    let mut writer = Base85Encoder::new(&mut buffer);
 
     for (kind, events) in group_by(tempo_events, |ev| tempo_event_kind(&ev.kind)) {
         encode_varint(&mut writer, events.len() as u64)?;
@@ -363,7 +352,7 @@ pub fn encode_tempo(
 
     writer.flush_buffer()?;
 
-    Ok(())
+    Ok(buffer)
 }
 
 #[cfg(test)]

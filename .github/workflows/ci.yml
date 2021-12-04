@@ -30,8 +30,7 @@ jobs:
           - name: Windows
             os: windows-latest
           - name: no features
-            # Only check, not test, because tests and doctests need std
-            invocation: cargo check --no-default-features
+            invocation: cargo test --no-default-features
 
     steps:
       - uses: actions/checkout@v2

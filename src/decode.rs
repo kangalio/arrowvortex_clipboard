@@ -93,10 +93,10 @@ fn decode_f64(data: &mut dyn Iterator<Item = u8>) -> Result<f64, DecodeError> {
 fn decode_notes<'a, P: 'static>(
     mut data: impl Iterator<Item = u8> + 'a,
     position_decode: fn(&mut dyn Iterator<Item = u8>) -> Result<P, DecodeError>,
-) -> Result<impl Iterator<Item = Result<Note<P>, DecodeError>> + 'a, DecodeError> {
+) -> Result<Vec<Note<P>>, DecodeError> {
     let size = decode_varint(&mut data)?;
 
-    Ok((0..size).map(move |_| {
+    let notes = (0..size).map(move |_| {
         let first_byte = data.next().ok_or(DecodeError::UnexpectedEof)?;
         let is_tap = first_byte & 0x80 == 0;
         let column = first_byte & 0x7F;
@@ -122,7 +122,8 @@ fn decode_notes<'a, P: 'static>(
             column,
             kind: note_kind,
         })
-    }))
+    });
+    notes.collect()
 }
 
 fn decode_u32(data: &mut dyn Iterator<Item = u8>) -> Result<u32, DecodeError> {
@@ -193,11 +194,11 @@ fn decode_single_tempo_event(
 
 fn decode_tempo<'a>(
     mut data: impl Iterator<Item = u8> + 'a,
-) -> Result<impl Iterator<Item = Result<TempoEvent, DecodeError>> + 'a, DecodeError> {
+) -> Result<Vec<TempoEvent>, DecodeError> {
     let mut count = decode_varint(&mut data)?;
     let mut kind = None;
 
-    Ok(core::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         if count == 0 {
             return None;
         };
@@ -220,17 +221,18 @@ fn decode_tempo<'a>(
         }
 
         Some(event)
-    }))
+    })
+    .collect()
 }
 
 /// Possible contents of ArrowVortex clipboard data. Returned by [`decode()`].
-pub enum DecodeResult<A, B, C> {
+pub enum DecodeResult {
     /// Row based notes copy (most common)
-    RowBasedNotes(A),
+    RowBasedNotes(Vec<Note<u64>>),
     /// Time based notes copy (if you enabled Time Based Copy in the menu)
-    TimeBasedNotes(B),
+    TimeBasedNotes(Vec<Note<f64>>),
     /// Tempo events copy
-    TempoEvents(C),
+    TempoEvents(Vec<TempoEvent>),
 }
 
 /// Decodes a byte buffer into an iterator of [`Note`]
@@ -241,9 +243,7 @@ pub enum DecodeResult<A, B, C> {
 /// let data = br#"ArrowVortex:notes:!!E9%!=T#H"!d"#;
 ///
 /// let notes = match arrowvortex_clipboard::decode(data)? {
-///     arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => {
-///         notes.collect::<Result<Vec<_>, _>>()?
-///     },
+///     arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => notes,
 ///     _ => panic!("Unexpected data type"),
 /// };
 ///
@@ -256,16 +256,7 @@ pub enum DecodeResult<A, B, C> {
 ///
 /// # Ok::<(), arrowvortex_clipboard::DecodeError>(())
 /// ```
-pub fn decode(
-    data: &[u8],
-) -> Result<
-    DecodeResult<
-        impl Iterator<Item = Result<Note<u64>, DecodeError>> + '_,
-        impl Iterator<Item = Result<Note<f64>, DecodeError>> + '_,
-        impl Iterator<Item = Result<TempoEvent, DecodeError>> + '_,
-    >,
-    DecodeError,
-> {
+pub fn decode(data: &[u8]) -> Result<DecodeResult, DecodeError> {
     let (data, is_tempo) = if let Some(data) = data.strip_prefix(b"ArrowVortex:notes:") {
         (data, false)
     } else if let Some(data) = data.strip_prefix(b"ArrowVortex:tempo:") {
