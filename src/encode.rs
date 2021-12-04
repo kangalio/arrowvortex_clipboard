@@ -18,7 +18,6 @@ impl core::fmt::Display for EncodeError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for EncodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
@@ -261,37 +260,37 @@ fn encode_single_tempo_event(
     event: &TempoEvent,
 ) -> Result<(), EncodeError> {
     encode_u32(writer, event.row)?;
-    match event.kind {
-        TempoEventKind::Bpm { bpm } => {
+    match &event.kind {
+        &TempoEventKind::Bpm { bpm } => {
             encode_f64(writer, bpm)?;
         }
-        TempoEventKind::Stop { time } => {
+        &TempoEventKind::Stop { time } => {
             encode_f64(writer, time)?;
         }
-        TempoEventKind::Delay { time } => {
+        &TempoEventKind::Delay { time } => {
             encode_f64(writer, time)?;
         }
-        TempoEventKind::Warp { num_skipped_rows } => {
+        &TempoEventKind::Warp { num_skipped_rows } => {
             encode_u32(writer, num_skipped_rows)?;
         }
-        TempoEventKind::TimeSignature {
+        &TempoEventKind::TimeSignature {
             numerator,
             denominator,
         } => {
             encode_u32(writer, numerator)?;
             encode_u32(writer, denominator)?;
         }
-        TempoEventKind::Ticks { num_ticks } => {
+        &TempoEventKind::Ticks { num_ticks } => {
             encode_u32(writer, num_ticks)?;
         }
-        TempoEventKind::Combo {
+        &TempoEventKind::Combo {
             combo_multiplier,
             miss_multiplier,
         } => {
             encode_u32(writer, combo_multiplier)?;
             encode_u32(writer, miss_multiplier)?;
         }
-        TempoEventKind::Speed {
+        &TempoEventKind::Speed {
             ratio,
             delay,
             delay_is_time,
@@ -300,16 +299,16 @@ fn encode_single_tempo_event(
             encode_f64(writer, delay)?;
             encode_u32(writer, delay_is_time as u32)?;
         }
-        TempoEventKind::Scroll { ratio } => {
+        &TempoEventKind::Scroll { ratio } => {
             encode_f64(writer, ratio)?;
         }
-        TempoEventKind::FakeSegment { num_fake_rows } => {
+        &TempoEventKind::FakeSegment { num_fake_rows } => {
             encode_u32(writer, num_fake_rows)?;
         }
-        TempoEventKind::Label { message_len } => {
-            encode_varint(writer, message_len)?;
-            for _ in 0..message_len {
-                writer.write(b'?')?;
+        TempoEventKind::Label { message } => {
+            encode_varint(writer, message.len() as u64)?;
+            for &byte in message {
+                writer.write(byte)?;
             }
         }
     }

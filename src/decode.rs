@@ -35,7 +35,6 @@ impl core::fmt::Display for DecodeError {
     }
 }
 
-#[cfg(feature = "std")]
 impl std::error::Error for DecodeError {}
 
 /// Convert `data` from AV clipboard format into bytes
@@ -177,11 +176,11 @@ fn decode_single_tempo_event(
         },
         10 => {
             let message_len = decode_varint(data)?;
-            // Discard the message for now, because idk how to store it on no_std
+            let mut message = Vec::with_capacity(message_len as usize);
             for _ in 0..message_len {
-                let _: u8 = data.next().ok_or(DecodeError::UnexpectedEof)?;
+                message.push(data.next().ok_or(DecodeError::UnexpectedEof)?);
             }
-            TempoEventKind::Label { message_len }
+            TempoEventKind::Label { message }
         }
         other => {
             return Err(DecodeError::UnknownTempoEventType {

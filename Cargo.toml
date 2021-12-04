@@ -7,7 +7,3 @@ description = "Small library for encoding and decoding ArrowVortex clipboard dat
 repository = "https://github.com/kangalioo/arrowvortex_clipboard"
 
 [dependencies]
-
-[features]
-default = ["std"]
-std = []

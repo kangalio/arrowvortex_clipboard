@@ -1,4 +1,3 @@
-#![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 #![warn(missing_docs)]
 
 /*!
@@ -147,9 +146,8 @@ pub enum TempoEventKind {
     ///
     /// Only message length is stored currently, due to no_std restrictions
     Label {
-        /// Message length in bytes
-        message_len: u64,
-        // TODO: message string
+        /// Message content
+        message: Vec<u8>,
     },
 }
 
