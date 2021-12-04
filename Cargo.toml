@@ -1,6 +1,6 @@
 [package]
 name = "arrowvortex_clipboard"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2018"
 license = "MIT"
 description = "Small library for encoding and decoding ArrowVortex clipboard data"
