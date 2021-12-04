@@ -17,13 +17,17 @@ an [`std::error::Error`] implementation for [`DecodeError`] and [`EncodeError`].
 let data = r#"ArrowVortex:notes:!"8i-K)chjJHuM^!#P_Z![IjrJi#:bJ2UO3!BC3L"%E"#;
 
 // Decode string into Vec<Note>
-let notes = arrowvortex_clipboard::decode(data.as_bytes())?
-    .collect::<Result<Vec<_>, _>>()?;
+let notes = match arrowvortex_clipboard::decode(data.as_bytes())? {
+    arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => {
+        notes.collect::<Result<Vec<_>, _>>()?
+    },
+    _ => panic!("Unexpected data type"),
+};
 println!("{:?}", notes);
 
 // Encode &[Note] into string
 let mut buffer = String::new();
-arrowvortex_clipboard::encode(&mut buffer, &notes)?;
+arrowvortex_clipboard::encode_row_based_notes(&mut buffer, &notes)?;
 println!("{}", buffer);
 
 // Verify that string stayed identical after roundtrip
@@ -78,52 +82,82 @@ pub struct Note<P> {
     pub kind: NoteKind<P>,
 }
 
+/// Tempo event type specific data
 #[derive(Debug, Clone, PartialEq)]
 pub enum TempoEventKind {
+    /// Changes BPM (beats per minute)
     Bpm {
+        /// BPM value
         bpm: f64,
     },
+    /// Stops for a number of seconds
     Stop {
+        /// Duration in seconds
         time: f64,
     },
+    /// Delays for a number of seconds
     Delay {
+        /// Duration in seconds
         time: f64,
     },
+    /// Warps over a number of rows
     Warp {
+        /// Length in rows
         num_skipped_rows: u32,
     },
+    /// Changes time signature
     TimeSignature {
+        /// Numerator of the time signature fraction
         numerator: u32,
+        /// Denominator of the time signature fraction
         denominator: u32,
     },
+    /// Changes number of ticks per beat
     Ticks {
+        /// Number of ticks per beat
         num_ticks: u32,
     },
+    /// Changes combo multiplier settings
     Combo {
+        /// Combo multiplier
         combo_multiplier: u32,
+        /// Miss multiplier
         miss_multiplier: u32,
     },
+    /// Unknown
     Speed {
+        /// Unknown
         ratio: f64,
+        /// Unknown
         delay: f64,
+        /// Unknown
         delay_is_time: bool,
     },
+    /// Changes scroll speed
     Scroll {
+        /// Scroll speed multiplier
         ratio: f64,
     },
+    /// Converts all notes in the following rows into fakes
     FakeSegment {
+        /// Length in rows
         num_fake_rows: u32,
     },
+    /// Label with arbitrary content
+    ///
+    /// Only message length is stored currently, due to no_std restrictions
     Label {
+        /// Message length in bytes
         message_len: u64,
         // TODO: message string
     },
 }
 
+/// Singular tempo event
 #[derive(Debug, Clone, PartialEq)]
 pub struct TempoEvent {
     /// Row position of this tempo event
-    pub pos: u32,
+    pub row: u32,
     /// Type and type-specific for this tempo event
     pub kind: TempoEventKind,
 }

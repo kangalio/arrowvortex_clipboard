@@ -44,21 +44,21 @@ fn decode_dwords_from_base85(data: &[u8]) -> impl Iterator<Item = u8> + '_ {
 
     // ArrowVortex groups bytes into 32bit ints and encodes them in base85 starting from ASCII 33.
     // Every 32bit int is represented by 5 base85 digits
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         let first_char = data.next()?;
         // 'z' is a shorthand for an entire zero chunk
         if first_char == b'z' {
             return Some([0, 0, 0, 0]);
         }
 
-        let mut dword = 85_u32.pow(4) * (first_char - 33) as u32
+        let dword = 85_u32.pow(4) * (first_char - 33) as u32
             + 85_u32.pow(3) * data.next().map_or(85, |b| b - 33) as u32
             + 85_u32.pow(2) * data.next().map_or(85, |b| b - 33) as u32
             + 85_u32.pow(1) * data.next().map_or(85, |b| b - 33) as u32
             + 85_u32.pow(0) * data.next().map_or(85, |b| b - 33) as u32;
         Some(dword.to_be_bytes())
     })
-    .flat_map(|dword_chunk| core::array::IntoIter::new(dword_chunk))
+    .flat_map(core::array::IntoIter::new)
 }
 
 #[inline(never)]
@@ -137,13 +137,8 @@ fn decode_u32(data: &mut dyn Iterator<Item = u8>) -> Result<u32, DecodeError> {
 
 fn decode_single_tempo_event(
     data: &mut dyn Iterator<Item = u8>,
-    kind: &mut Option<u8>,
+    kind: u8,
 ) -> Result<TempoEvent, DecodeError> {
-    if kind.is_none() {
-        *kind = Some(data.next().ok_or(DecodeError::UnexpectedEof)?);
-    }
-    let kind = kind.unwrap();
-
     let pos = decode_u32(data)?;
     let kind = match kind {
         0 => TempoEventKind::Bpm {
@@ -194,7 +189,7 @@ fn decode_single_tempo_event(
             })
         }
     };
-    Ok(TempoEvent { pos, kind })
+    Ok(TempoEvent { row: pos, kind })
 }
 
 fn decode_tempo<'a>(
@@ -203,12 +198,18 @@ fn decode_tempo<'a>(
     let mut count = decode_varint(&mut data)?;
     let mut kind = None;
 
-    Ok(std::iter::from_fn(move || {
+    Ok(core::iter::from_fn(move || {
         if count == 0 {
             return None;
         };
 
-        let event = decode_single_tempo_event(&mut data, &mut kind);
+        if kind.is_none() {
+            kind = Some(match data.next() {
+                Some(x) => x,
+                None => return Some(Err(DecodeError::UnexpectedEof)),
+            });
+        }
+        let event = decode_single_tempo_event(&mut data, kind.unwrap());
 
         count -= 1;
         if count == 0 {
@@ -223,9 +224,13 @@ fn decode_tempo<'a>(
     }))
 }
 
+/// Possible contents of ArrowVortex clipboard data. Returned by [`decode()`].
 pub enum DecodeResult<A, B, C> {
-    NotesRowBased(A),
-    NotesTimeBased(B),
+    /// Row based notes copy (most common)
+    RowBasedNotes(A),
+    /// Time based notes copy (if you enabled Time Based Copy in the menu)
+    TimeBasedNotes(B),
+    /// Tempo events copy
     TempoEvents(C),
 }
 
@@ -235,13 +240,19 @@ pub enum DecodeResult<A, B, C> {
 /// use arrowvortex_clipboard::{Note, NoteKind};
 ///
 /// let data = br#"ArrowVortex:notes:!!E9%!=T#H"!d"#;
-/// let notes = arrowvortex_clipboard::decode(data)?.collect::<Result<Vec<_>, _>>()?;
+///
+/// let notes = match arrowvortex_clipboard::decode(data)? {
+///     arrowvortex_clipboard::DecodeResult::RowBasedNotes(notes) => {
+///         notes.collect::<Result<Vec<_>, _>>()?
+///     },
+///     _ => panic!("Unexpected data type"),
+/// };
 ///
 /// assert_eq!(&notes, &[
-///     Note { row: 0, column: 0, kind: NoteKind::Tap },
-///     Note { row: 12, column: 1, kind: NoteKind::Tap },
-///     Note { row: 24, column: 2, kind: NoteKind::Tap },
-///     Note { row: 36, column: 3, kind: NoteKind::Tap },
+///     Note { pos: 0, column: 0, kind: NoteKind::Tap },
+///     Note { pos: 12, column: 1, kind: NoteKind::Tap },
+///     Note { pos: 24, column: 2, kind: NoteKind::Tap },
+///     Note { pos: 36, column: 3, kind: NoteKind::Tap },
 /// ]);
 ///
 /// # Ok::<(), arrowvortex_clipboard::DecodeError>(())
@@ -272,9 +283,9 @@ pub fn decode(
         let is_time_based = data.next().ok_or(DecodeError::UnexpectedEof)? != 0;
 
         if is_time_based {
-            DecodeResult::NotesTimeBased(decode_notes(data, decode_f64)?)
+            DecodeResult::TimeBasedNotes(decode_notes(data, decode_f64)?)
         } else {
-            DecodeResult::NotesRowBased(decode_notes(data, decode_varint)?)
+            DecodeResult::RowBasedNotes(decode_notes(data, decode_varint)?)
         }
     })
 }
